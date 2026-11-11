@@ -37,7 +37,7 @@ ON_COLOUR = "#1d4d33"
 ON_HOVER = "#256341"
 FONT = "Segoe UI"
 
-VIDEO_WIDTH = 480
+VIDEO_WIDTH = 520
 # How often the window asks the camera thread for a new picture, in milliseconds.
 REFRESH_MS = 40
 
@@ -134,7 +134,7 @@ class Button(tk.Label):
 
     def __init__(self, parent, text, command, colour=CARD, hover=CARD_HOVER, **options):
         super().__init__(parent, text=text, bg=colour, fg=TEXT, font=(FONT, 11, "bold"),
-                         pady=12, cursor="hand2", **options)
+                         pady=10, cursor="hand2", **options)
         self.colour, self.hover = colour, hover
         self.bind("<Button-1>", lambda event: command())
         self.bind("<Enter>", lambda event: self.configure(bg=self.hover))
@@ -146,16 +146,16 @@ class Button(tk.Label):
 
 
 class Toggle(tk.Frame):
-    """A wide on/off row: gesture name, what it does, and its state."""
+    """A compact on/off row: gesture name, what it does, and its state."""
 
     def __init__(self, parent, title, action, command):
         super().__init__(parent, bg=CARD, cursor="hand2")
-        self.title = tk.Label(self, text=title, font=(FONT, 11, "bold"), anchor="w")
-        self.action = tk.Label(self, text=action, font=(FONT, 9), anchor="w")
-        self.state = tk.Label(self, font=(FONT, 11, "bold"), width=4)
-        self.state.pack(side="right", padx=(0, 12))
-        self.title.pack(fill="x", padx=14, pady=(8, 0))
-        self.action.pack(fill="x", padx=14, pady=(0, 8))
+        self.title = tk.Label(self, text=title, font=(FONT, 10, "bold"))
+        self.action = tk.Label(self, text=action, font=(FONT, 9))
+        self.state = tk.Label(self, font=(FONT, 10, "bold"), width=4)
+        self.title.pack(side="left", padx=(12, 6), pady=9)
+        self.action.pack(side="left")
+        self.state.pack(side="right", padx=(0, 8))
         self.colour, self.hover = CARD, CARD_HOVER
         for widget in (self, self.title, self.action, self.state):
             widget.bind("<Button-1>", lambda event: command())
@@ -223,28 +223,34 @@ class App:
 
         # The camera view gets a fixed-size box, so the layout does not depend
         # on whether a picture has arrived yet.
+        # The camera view and the panel sit side by side and are the same
+        # height. The view gets a fixed-size box, so the layout does not depend
+        # on whether a picture has arrived yet; a wide picture is centred in it.
         video_box = tk.Frame(self.root, bg="black", width=VIDEO_WIDTH, height=self.video_height)
-        video_box.pack(side="left", anchor="n", padx=(16, 0), pady=16)
+        video_box.pack(side="left", fill="y", padx=(14, 0), pady=14)
         video_box.pack_propagate(False)
         self.video = tk.Label(video_box, bg="black", bd=0)
         self.video.pack(fill="both", expand=True)
         self.video_image = None
 
         panel = tk.Frame(self.root, bg=BACKGROUND)
-        panel.pack(side="left", fill="y", padx=16, pady=16)
+        panel.pack(side="left", fill="y", padx=14, pady=14)
 
-        tk.Label(panel, text="Hand Mouse", bg=BACKGROUND, fg=TEXT,
-                 font=(FONT, 18, "bold"), anchor="w").pack(fill="x")
-        self.status = tk.Label(panel, bg=BACKGROUND, fg=MUTED, font=(FONT, 10),
-                               anchor="w", justify="left")
-        self.status.pack(fill="x", pady=(2, 0))
+        header = tk.Frame(panel, bg=BACKGROUND)
+        header.pack(fill="x")
+        tk.Label(header, text="Hand Mouse", bg=BACKGROUND, fg=TEXT,
+                 font=(FONT, 16, "bold")).pack(side="left")
+        self.fps_label = tk.Label(header, bg=BACKGROUND, fg=MUTED, font=(FONT, 9))
+        self.fps_label.pack(side="right", pady=(6, 0))
+        self.status = tk.Label(panel, bg=BACKGROUND, fg=MUTED, font=(FONT, 10), anchor="w")
+        self.status.pack(fill="x")
 
         self._heading(panel, "Cursor smoothing")
         row = tk.Frame(panel, bg=BACKGROUND)
         row.pack(fill="x")
         self.smoothing_buttons = {}
         for column, (label, value) in enumerate(SMOOTHING_LEVELS):
-            button = Button(row, label, lambda value=value: self._set_smoothing(value), width=7)
+            button = Button(row, label, lambda value=value: self._set_smoothing(value), width=6)
             button.grid(row=0, column=column, padx=(0 if column == 0 else 6, 0), sticky="ew")
             row.columnconfigure(column, weight=1)
             self.smoothing_buttons[value] = button
@@ -256,17 +262,19 @@ class App:
                                     ("peace_enabled", "Peace sign", "Show desktop"),
                                     ("point_enabled", "Point", "Press Esc")):
             toggle = Toggle(panel, title, action, lambda name=name: self._toggle_gesture(name))
-            toggle.pack(fill="x", pady=(0, 6))
+            toggle.pack(fill="x", pady=(0, 5))
             toggle.set(getattr(self.settings, name))
             self.gesture_toggles[name] = toggle
 
         tk.Frame(panel, bg=BACKGROUND).pack(fill="both", expand=True)  # pushes the rest down
-        self.pause_button = Button(panel, "", self._toggle_pause)
-        self.pause_button.pack(fill="x", pady=(12, 6))
+        bottom = tk.Frame(panel, bg=BACKGROUND)
+        bottom.pack(fill="x", pady=(10, 0))
+        bottom.columnconfigure(0, weight=3, uniform="bottom")
+        bottom.columnconfigure(1, weight=2, uniform="bottom")
+        self.pause_button = Button(bottom, "", self._toggle_pause)
+        self.pause_button.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         self._refresh_pause()
-        Button(panel, "Quit", self.stop).pack(fill="x")
-        tk.Label(panel, text="Esc also quits", bg=BACKGROUND, fg=MUTED,
-                 font=(FONT, 9)).pack(pady=(6, 0))
+        Button(bottom, "Quit (Esc)", self.stop).grid(row=0, column=1, sticky="ew")
 
         # Lock the window to the size its contents need. Setting the minimum
         # and maximum size (rather than resizable(False, False)) stops Windows
@@ -281,7 +289,7 @@ class App:
     @staticmethod
     def _heading(parent, text):
         tk.Label(parent, text=text.upper(), bg=BACKGROUND, fg=MUTED, font=(FONT, 9, "bold"),
-                 anchor="w").pack(fill="x", pady=(18, 6))
+                 anchor="w").pack(fill="x", pady=(14, 5))
 
     # --- button actions --------------------------------------------------------
 
@@ -304,10 +312,10 @@ class App:
 
     def _refresh_pause(self):
         if self.paused:
-            self.pause_button.configure(text="Resume hand control")
+            self.pause_button.configure(text="Resume control")
             self.pause_button.set_colour(GREEN, "#16a34a")
         else:
-            self.pause_button.configure(text="Pause hand control")
+            self.pause_button.configure(text="Pause control")
             self.pause_button.set_colour(CARD, CARD_HOVER)
 
     # --- camera thread ---------------------------------------------------------
@@ -395,8 +403,8 @@ class App:
                 self.video_image = tk.PhotoImage(data=encoded, format="PPM")
                 self.video.configure(image=self.video_image)
             active = state not in ("Paused", "No hand in view", "Starting")
-            self.status.configure(text=f"{state}   |   {fps:.0f} FPS",
-                                  fg=GREEN if active else MUTED)
+            self.status.configure(text=state, fg=GREEN if active else MUTED)
+            self.fps_label.configure(text=f"{fps:.0f} FPS")
         self.root.after(REFRESH_MS, self._refresh)
 
     def stop(self):
