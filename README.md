@@ -13,7 +13,7 @@ Built as the final project for the AI Lab course (Applied Computer Science and A
 | Peace sign (ASL 2), held for half a second | Show desktop (`Win + D`) | yes |
 | Point with the index finger (ASL 1), held for 0.8 seconds | Press `Esc` | no |
 
-A small control panel lets you switch each gesture on or off and set how much the cursor is smoothed.
+The camera view and the controls share one window. Every control is a large single-click button, with no sliders or small checkboxes, so the panel can be operated with the hand-driven cursor itself. From it you can switch each gesture on or off, choose how much the cursor is smoothed, and pause hand control.
 
 ## Setup
 
@@ -28,7 +28,7 @@ python hand_mouse.py
 
 The first run downloads MediaPipe's hand model (about 8 MB) next to the script. The gesture classifier is trained from the CSV each time the program starts, which takes well under a second, so there is no model file to keep in sync.
 
-To quit, press `Esc` in the camera window or close either window. Moving the real mouse into a corner of the screen also stops the program (PyAutoGUI's fail-safe). Use `python hand_mouse.py --camera 1` to pick another webcam.
+To quit, press `Esc`, click Quit, or close the window. Moving the real mouse into a corner of the screen also stops the program (PyAutoGUI's fail-safe). Use `python hand_mouse.py --camera 1` to pick another webcam.
 
 The mouse and `Esc` actions work on any system PyAutoGUI supports. The show-desktop shortcut is the Windows one.
 
@@ -70,7 +70,7 @@ The dataset has 5,000 samples, 500 per digit, of which 4,598 remain after removi
 ## Project structure
 
 ```
-hand_mouse.py         the application: camera loop, hand tracker, control panel
+hand_mouse.py         the application: camera loop, hand tracker, window and controls
 mouse_controller.py   cursor mapping, pinch detection, gesture triggering
 gesture_model.py      landmark features and the gesture classifier
 evaluate_model.py     accuracy report and confusion matrix
