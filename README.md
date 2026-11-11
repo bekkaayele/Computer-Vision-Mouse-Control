@@ -2,8 +2,6 @@
 
 Control the mouse with your hand in front of a webcam. MediaPipe tracks the hand, a k-nearest-neighbours classifier trained on American Sign Language digits recognises gestures, and PyAutoGUI moves the cursor and presses keys.
 
-Built as the final project for the AI Lab course (Applied Computer Science and Artificial Intelligence, Sapienza University of Rome).
-
 ## Gestures
 
 | Gesture | Action | On by default |
