@@ -10,6 +10,7 @@ hand_landmarker.task
 
 # Editors and OS
 .vscode/
+tempCodeRunnerFile.py
 .idea/
 .DS_Store
 Thumbs.db
