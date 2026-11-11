@@ -1,0 +1,10 @@
+mediapipe>=0.10.14
+opencv-contrib-python
+pyautogui
+numpy
+pandas
+scikit-learn
+
+# only needed for evaluate_model.py and the tests
+matplotlib
+pytest

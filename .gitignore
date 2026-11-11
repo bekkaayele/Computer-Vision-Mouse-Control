@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# MediaPipe hand model, downloaded on first run
+hand_landmarker.task
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
