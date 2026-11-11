@@ -190,6 +190,11 @@ class App:
             raise SystemExit(f"Could not open camera {camera_index}. "
                              "Is it connected and not in use by another program?")
 
+        # Height of the camera view in the window, from the camera's own picture shape.
+        width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH) or 640
+        height = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480
+        self.video_height = round(VIDEO_WIDTH * height / width)
+
         self.tracker = HandTracker()
         self.settings = Settings()
         self.backend = PyAutoGuiBackend()
@@ -213,12 +218,16 @@ class App:
         self.root = tk.Tk()
         self.root.title("Hand Mouse")
         self.root.configure(bg=BACKGROUND)
-        self.root.resizable(False, False)
         self.root.protocol("WM_DELETE_WINDOW", self.stop)
         self.root.bind("<Escape>", lambda event: self.stop())
 
-        self.video = tk.Label(self.root, bg="black", bd=0)
-        self.video.pack(side="left", anchor="n", padx=(16, 0), pady=16)
+        # The camera view gets a fixed-size box, so the layout does not depend
+        # on whether a picture has arrived yet.
+        video_box = tk.Frame(self.root, bg="black", width=VIDEO_WIDTH, height=self.video_height)
+        video_box.pack(side="left", anchor="n", padx=(16, 0), pady=16)
+        video_box.pack_propagate(False)
+        self.video = tk.Label(video_box, bg="black", bd=0)
+        self.video.pack(fill="both", expand=True)
         self.video_image = None
 
         panel = tk.Frame(self.root, bg=BACKGROUND)
@@ -258,6 +267,16 @@ class App:
         Button(panel, "Quit", self.stop).pack(fill="x")
         tk.Label(panel, text="Esc also quits", bg=BACKGROUND, fg=MUTED,
                  font=(FONT, 9)).pack(pady=(6, 0))
+
+        # Lock the window to the size its contents need. Setting the minimum
+        # and maximum size (rather than resizable(False, False)) stops Windows
+        # from bringing the window back as a bare title bar after it was
+        # minimised by the show-desktop shortcut.
+        self.root.update_idletasks()
+        self.window_size = (self.root.winfo_reqwidth(), self.root.winfo_reqheight())
+        self.root.geometry("%dx%d" % self.window_size)
+        self.root.minsize(*self.window_size)
+        self.root.maxsize(*self.window_size)
 
     @staticmethod
     def _heading(parent, text):
@@ -325,7 +344,7 @@ class App:
 
                 if hand is not None:
                     draw_hand(frame, hand)
-                picture = cv2.resize(frame, (VIDEO_WIDTH, round(height * VIDEO_WIDTH / width)))
+                picture = cv2.resize(frame, (VIDEO_WIDTH, self.video_height))
                 with self._lock:
                     self._picture = picture
                     self._state = self._describe(hand)
@@ -367,6 +386,9 @@ class App:
 
         # Nothing to draw while the window is minimised.
         if self.root.state() != "iconic":
+            # Safety net: if the window ever comes back smaller than it should be, restore it.
+            if (self.root.winfo_width(), self.root.winfo_height()) != self.window_size:
+                self.root.geometry("%dx%d" % self.window_size)
             if picture is not None:
                 # Tk can read the PPM image format directly, so no extra image library is needed.
                 encoded = cv2.imencode(".ppm", picture)[1].tobytes()
