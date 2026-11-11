@@ -27,11 +27,24 @@ def cross_validated_accuracy(landmarks, labels, folds=5):
     return float(np.mean(scores)), float(np.std(scores))
 
 
-def moved_and_resized(landmarks, rng):
-    """The same hands, but somewhere else in the frame and at another size."""
+def moved_resized_and_tilted(landmarks, rng):
+    """The same hands, but elsewhere in the frame, at another size and tilted up to 45 degrees."""
+    angle = np.radians(rng.uniform(-45, 45, size=(len(landmarks), 1)))
+    x, y = landmarks[:, :, 0], landmarks[:, :, 1]
+    changed = landmarks.copy()
+    changed[:, :, 0] = x * np.cos(angle) - y * np.sin(angle)
+    changed[:, :, 1] = x * np.sin(angle) + y * np.cos(angle)
     scale = rng.uniform(0.5, 1.5, size=(len(landmarks), 1, 1))
     shift = rng.uniform(-0.3, 0.3, size=(len(landmarks), 1, 3))
-    return landmarks * scale + shift
+    return changed * scale + shift
+
+
+def with_noise(landmarks, rng, fraction=0.05):
+    """Every landmark nudged by a random amount, as a stand-in for a different person's hand."""
+    palm = np.linalg.norm(landmarks[:, 9, :2] - landmarks[:, 0, :2], axis=1)[:, None, None]
+    noisy = landmarks.copy()
+    noisy[:, :, :2] += rng.normal(0, fraction, size=(len(landmarks), 21, 2)) * palm
+    return noisy
 
 
 def unknown_pose_rejection(landmarks, labels):
@@ -61,8 +74,10 @@ def main():
     print(f"5-fold cross-validated accuracy: {mean:.4f} (+/- {std:.4f})")
 
     rng = np.random.default_rng(SEED)
-    moved = accuracy_score(test_y, model.predict(moved_and_resized(test_x, rng)))
-    print(f"Test accuracy with hands moved and resized: {moved:.4f}")
+    moved = accuracy_score(test_y, model.predict(moved_resized_and_tilted(test_x, rng)))
+    print(f"Test accuracy with hands moved, resized and tilted: {moved:.4f}")
+    noisy = accuracy_score(test_y, model.predict(with_noise(test_x, rng)))
+    print(f"Test accuracy with every landmark nudged by 5% of the palm length: {noisy:.4f}")
     print(f"Test accuracy on mirrored (other) hands: "
           f"{accuracy_score(test_y, model.predict(mirror(test_x))):.4f}")
     print(f"Unseen digits rejected as unknown: {unknown_pose_rejection(landmarks, labels):.0%}")

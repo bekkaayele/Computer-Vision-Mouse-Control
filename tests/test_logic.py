@@ -83,6 +83,25 @@ def test_features_ignore_hand_position_and_size(dataset):
     assert np.allclose(landmarks_to_features(hand), landmarks_to_features(moved))
 
 
+def test_features_ignore_hand_tilt(dataset):
+    hand = sample(dataset, 2)
+    angle = np.radians(35)
+    tilted = hand.copy()
+    tilted[:, 0] = hand[:, 0] * np.cos(angle) - hand[:, 1] * np.sin(angle)
+    tilted[:, 1] = hand[:, 0] * np.sin(angle) + hand[:, 1] * np.cos(angle)
+    assert np.allclose(landmarks_to_features(hand), landmarks_to_features(tilted))
+
+
+def test_classifier_accepts_a_slightly_different_hand(dataset, classifier):
+    landmarks, labels = dataset
+    rng = np.random.default_rng(0)
+    for digit in (1, 2):
+        hands = landmarks[labels == digit][:50].copy()
+        palm = np.linalg.norm(hands[:, 9, :2] - hands[:, 0, :2], axis=1)[:, None, None]
+        hands[:, :, :2] += rng.normal(0, 0.05, size=(50, 21, 2)) * palm
+        assert np.mean(classifier.predict(hands) == digit) > 0.95
+
+
 def test_classifier_recognises_each_digit(dataset, classifier):
     for digit in range(10):
         assert classifier.predict_one(sample(dataset, digit)) == digit
@@ -154,16 +173,35 @@ def test_hold_trigger_fires_once_per_hold():
     assert not trigger.update(True, 0.4)
     assert trigger.update(True, 0.5)
     assert not trigger.update(True, 5.0)   # still held: no repeat
-    assert not trigger.update(False, 5.1)  # released
-    assert not trigger.update(True, 5.2)
-    assert trigger.update(True, 5.7)
+    assert not trigger.update(False, 5.1)  # released...
+    assert not trigger.update(False, 5.5)  # ...for longer than the grace period
+    assert not trigger.update(True, 5.6)
+    assert trigger.update(True, 6.1)
 
 
-def test_hold_trigger_needs_an_unbroken_hold():
+def test_hold_trigger_survives_a_short_flicker():
     trigger = HoldTrigger(0.5)
     trigger.update(True, 0.0)
-    trigger.update(False, 0.3)
+    trigger.update(False, 0.2)          # one or two unrecognised frames
+    assert trigger.update(True, 0.5)
+
+
+def test_hold_trigger_starts_again_after_a_real_break():
+    trigger = HoldTrigger(0.5)
+    trigger.update(True, 0.0)
+    trigger.update(False, 0.1)
+    trigger.update(False, 0.5)          # gone for longer than the grace period
     assert not trigger.update(True, 0.6)
+    assert trigger.update(True, 1.1)
+
+
+def test_flicker_does_not_fire_a_held_gesture_twice():
+    trigger = HoldTrigger(0.5)
+    trigger.update(True, 0.0)
+    assert trigger.update(True, 0.5)
+    trigger.update(False, 0.6)
+    assert not trigger.update(True, 0.7)
+    assert not trigger.update(True, 2.0)
 
 
 # --- controller --------------------------------------------------------------
@@ -218,3 +256,12 @@ def test_cursor_glides_from_where_the_mouse_already_is(dataset, classifier):
     backend.cursor = (1500, 900)
     hold(controller, clock, sample(dataset, 5), seconds=1 / 30)
     assert abs(backend.cursor[0] - 1500) < 200 and abs(backend.cursor[1] - 900) < 200
+
+
+def test_point_fires_even_if_some_frames_are_not_recognised(dataset, classifier):
+    controller, backend, clock = make_controller(classifier, point_enabled=True)
+    point, other = sample(dataset, 1), sample(dataset, 5)
+    for frame in range(60):
+        clock.now += 1 / 30
+        controller.update(other if frame % 5 == 4 else point, 640, 480)
+    assert backend.events == ["escape"]

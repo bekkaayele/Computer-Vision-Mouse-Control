@@ -16,20 +16,24 @@ WRIST = 0
 MIDDLE_MCP = 9  # knuckle at the base of the middle finger
 
 N_NEIGHBORS = 5
-# A pose is "unknown" when it is farther from its neighbours than this
-# percentage of the training poses are from theirs.
+# A pose is "unknown" when it is much farther from its neighbours than training
+# poses are from theirs: REJECT_MARGIN times the 99th percentile of that
+# distance. The margin leaves room for hands that differ from the ones in the
+# dataset; with no margin, small differences already come back as "unknown".
 REJECT_PERCENTILE = 99
+REJECT_MARGIN = 3.0
 
 
 def landmarks_to_features(landmarks):
-    """Make landmarks independent of where the hand is and how big it looks.
+    """Make landmarks independent of where the hand is, how big it looks and how it is tilted.
 
     landmarks: array of shape (21, 2+) or (n, 21, 2+) with x, y in any unit.
     Returns an array of shape (42,) or (n, 42).
 
-    The wrist is moved to the origin and every point is divided by the palm
-    length (wrist to middle knuckle). Only x and y are used: MediaPipe's z is
-    a rough estimate and adds more noise than information here.
+    The wrist is moved to the origin, every point is divided by the palm
+    length (wrist to middle knuckle), and the hand is turned so the middle
+    knuckle is straight above the wrist. Only x and y are used: MediaPipe's z
+    is a rough estimate and adds more noise than information here.
     """
     points = np.asarray(landmarks, dtype=float)
     single = points.ndim == 2
@@ -39,7 +43,15 @@ def landmarks_to_features(landmarks):
     points = points - points[:, [WRIST], :]
     palm = np.linalg.norm(points[:, MIDDLE_MCP, :], axis=1)
     palm = np.where(palm < 1e-9, 1.0, palm)  # degenerate hand: avoid dividing by zero
-    features = (points / palm[:, None, None]).reshape(len(points), -1)
+    points = points / palm[:, None, None]
+
+    # Rotate by the angle between the palm direction and "up" (y grows downwards in images).
+    angle = np.arctan2(points[:, MIDDLE_MCP, 0], -points[:, MIDDLE_MCP, 1])
+    cos, sin = np.cos(angle)[:, None], np.sin(angle)[:, None]
+    x, y = points[:, :, 0], points[:, :, 1]
+    upright = np.stack([x * cos + y * sin, -x * sin + y * cos], axis=-1)
+
+    features = upright.reshape(len(upright), -1)
     return features[0] if single else features
 
 
@@ -65,9 +77,11 @@ def mirror(landmarks):
 class GestureClassifier:
     """K-nearest-neighbours on normalised landmarks, with an "unknown" answer."""
 
-    def __init__(self, n_neighbors=N_NEIGHBORS, reject_percentile=REJECT_PERCENTILE):
+    def __init__(self, n_neighbors=N_NEIGHBORS, reject_percentile=REJECT_PERCENTILE,
+                 reject_margin=REJECT_MARGIN):
         self.n_neighbors = n_neighbors
         self.reject_percentile = reject_percentile
+        self.reject_margin = reject_margin
         self.knn = KNeighborsClassifier(n_neighbors=n_neighbors)
         self.reject_distance = np.inf
 
@@ -82,7 +96,7 @@ class GestureClassifier:
         # neighbour of a training point is itself, so it is skipped.)
         distances, _ = self.knn.kneighbors(features, n_neighbors=self.n_neighbors + 1)
         typical = distances[:, 1:].mean(axis=1)
-        self.reject_distance = float(np.percentile(typical, self.reject_percentile))
+        self.reject_distance = self.reject_margin * float(np.percentile(typical, self.reject_percentile))
         return self
 
     def predict(self, landmarks):

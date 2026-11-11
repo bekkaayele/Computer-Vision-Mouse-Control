@@ -94,21 +94,29 @@ class PinchDetector:
 
 
 class HoldTrigger:
-    """Fires once when a gesture has been held without a break for `hold_seconds`.
+    """Fires once when a gesture has been held for `hold_seconds`.
 
-    It will not fire again until the gesture has been released.
+    Recognition flickers on real camera frames, so gaps shorter than
+    `grace_seconds` do not interrupt the hold. After firing, the gesture has
+    to be released before it can fire again.
     """
 
-    def __init__(self, hold_seconds):
+    def __init__(self, hold_seconds, grace_seconds=0.25):
         self.hold_seconds = hold_seconds
+        self.grace_seconds = grace_seconds
+        self.reset()
+
+    def reset(self):
         self._since = None
+        self._last_seen = None
         self._fired = False
 
     def update(self, active, now):
         if not active:
-            self._since = None
-            self._fired = False
+            if self._last_seen is None or now - self._last_seen > self.grace_seconds:
+                self.reset()
             return False
+        self._last_seen = now
         if self._since is None:
             self._since = now
         if not self._fired and now - self._since >= self.hold_seconds:
@@ -141,7 +149,7 @@ class HandMouseController:
         self.cursor = CursorMapper(*screen_size)
         self.pinch = PinchDetector()
         self.peace = HoldTrigger(0.5)
-        self.point = HoldTrigger(0.8)
+        self.point = HoldTrigger(0.6)
         self.click_freeze_seconds = 0.25
         self._pinch_started = 0.0
         self.button_down = False
@@ -198,7 +206,7 @@ class HandMouseController:
             self.backend.mouse_up()
             self.button_down = False
         self.pinch.pinched = False
-        self.peace.update(False, 0)
-        self.point.update(False, 0)
+        self.peace.reset()
+        self.point.reset()
         self.gesture = None
         self._hand_visible = False

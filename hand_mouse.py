@@ -5,7 +5,9 @@ Quit: press Esc, click Quit, or close the window.
 """
 
 import argparse
+import threading
 import time
+import traceback
 import tkinter as tk
 import urllib.request
 from pathlib import Path
@@ -35,11 +37,12 @@ ON_COLOUR = "#1d4d33"
 ON_HOVER = "#256341"
 FONT = "Segoe UI"
 
-# Drawing the camera picture is the slowest part of the window, so it is shown
-# a little smaller and refreshed on every second frame. The mouse is still
-# updated on every frame.
 VIDEO_WIDTH = 480
-VIDEO_EVERY = 2
+# How often the window asks the camera thread for a new picture, in milliseconds.
+REFRESH_MS = 40
+
+# Shown in the status line; other digits are shown as "Digit N".
+GESTURE_NAMES = {1: "Point (digit 1)", 2: "Peace sign (digit 2)"}
 
 # Smoothing presets: label -> how strongly the cursor is smoothed (0 = not at all).
 SMOOTHING_LEVELS = [("Off", 0), ("Low", 2), ("Medium", 4), ("High", 8)]
@@ -172,7 +175,14 @@ class Toggle(tk.Frame):
 
 
 class App:
-    """One window with the camera view and the controls, all on the main thread."""
+    """The window with the camera view and the controls.
+
+    Two threads share the work. A background thread reads the camera, finds
+    the hand and drives the mouse, so hand control keeps running whatever
+    happens to the window (minimised, covered, being redrawn). The main
+    thread only runs the Tk window: it handles the buttons and shows the most
+    recent camera picture.
+    """
 
     def __init__(self, camera_index):
         self.camera = cv2.VideoCapture(camera_index)
@@ -186,11 +196,15 @@ class App:
         self.controller = HandMouseController(
             build_classifier(), self.backend, pyautogui.size(), self.settings)
 
-        self.last_frame_time = time.monotonic()
-        self.fps = 0.0
-        self.frame_count = 0
         self.paused = False
         self.running = True
+        self.stop_requested = threading.Event()
+        self.worker = threading.Thread(target=self._camera_loop, daemon=True)
+        # What the camera thread last produced, for the window to display.
+        self._lock = threading.Lock()
+        self._picture = None
+        self._state = "Starting"
+        self._fps = 0.0
         self._build_window()
 
     # --- window layout ---------------------------------------------------------
@@ -277,77 +291,104 @@ class App:
             self.pause_button.configure(text="Pause hand control")
             self.pause_button.set_colour(CARD, CARD_HOVER)
 
-    # --- camera loop -----------------------------------------------------------
+    # --- camera thread ---------------------------------------------------------
 
-    def step(self):
-        """Handle one camera frame, then ask Tk to call this again."""
+    def _camera_loop(self):
+        """Runs in the background thread until the program stops. No Tk calls here."""
+        last_time = time.monotonic()
+        fps = 0.0
+        try:
+            while not self.stop_requested.is_set():
+                ok, frame = self.camera.read()
+                if not ok:
+                    print("The camera stopped sending frames.")
+                    break
+                frame = cv2.flip(frame, 1)  # mirror, so moving right moves the cursor right
+                height, width = frame.shape[:2]
+
+                try:
+                    hand = self.tracker.find_hand(frame)
+                    # While paused the controller is told there is no hand, so it lets go of everything.
+                    self.controller.update(None if self.paused else hand, width, height)
+                except pyautogui.FailSafeException:
+                    print("Mouse moved into a screen corner: stopping (PyAutoGUI fail-safe).")
+                    break
+                except Exception:
+                    # One bad frame must not end hand control: report it and carry on.
+                    traceback.print_exc()
+                    continue
+
+                now = time.monotonic()
+                instant = 1.0 / max(now - last_time, 1e-6)
+                fps = instant if fps == 0 else 0.9 * fps + 0.1 * instant
+                last_time = now
+
+                if hand is not None:
+                    draw_hand(frame, hand)
+                picture = cv2.resize(frame, (VIDEO_WIDTH, round(height * VIDEO_WIDTH / width)))
+                with self._lock:
+                    self._picture = picture
+                    self._state = self._describe(hand)
+                    self._fps = fps
+        finally:
+            try:
+                self.controller.hand_lost()  # never leave the mouse button held down
+            except pyautogui.FailSafeException:
+                pass
+            self.tracker.close()
+            self.camera.release()
+            self.stop_requested.set()
+
+    def _describe(self, hand):
+        if self.paused:
+            return "Paused"
+        if hand is None:
+            return "No hand in view"
+        if self.controller.button_down:
+            return "Pinching"
+        gesture = self.controller.gesture
+        if gesture is not None:
+            return GESTURE_NAMES.get(gesture, f"Digit {gesture}")
+        return "Tracking"
+
+    # --- window refresh --------------------------------------------------------
+
+    def _refresh(self):
+        """Runs in the main thread: show the newest picture and status."""
         if not self.running:
             return
-        ok, frame = self.camera.read()
-        if not ok:
-            print("The camera stopped sending frames.")
+        if self.stop_requested.is_set():  # the camera thread has ended
             self.stop()
             return
 
-        frame = cv2.flip(frame, 1)  # mirror, so moving right moves the cursor right
-        height, width = frame.shape[:2]
-        hand = self.tracker.find_hand(frame)
+        with self._lock:
+            picture, self._picture = self._picture, None
+            state, fps = self._state, self._fps
 
-        try:
-            # While paused the controller is told there is no hand, so it lets go of everything.
-            self.controller.update(None if self.paused else hand, width, height)
-        except pyautogui.FailSafeException:
-            print("Mouse moved into a screen corner: stopping (PyAutoGUI fail-safe).")
-            self.stop()
-            return
-
-        self._show(frame, hand)
-        self.root.after(1, self.step)
-
-    def _show(self, frame, hand):
-        now = time.monotonic()
-        instant_fps = 1.0 / max(now - self.last_frame_time, 1e-6)
-        self.fps = instant_fps if self.fps == 0 else 0.9 * self.fps + 0.1 * instant_fps
-        self.last_frame_time = now
-
-        self.frame_count += 1
-        if self.frame_count % VIDEO_EVERY == 1:
-            if hand is not None:
-                draw_hand(frame, hand)
-            height, width = frame.shape[:2]
-            frame = cv2.resize(frame, (VIDEO_WIDTH, round(height * VIDEO_WIDTH / width)))
-            # Tk can read the PPM image format directly, so no extra image library is needed.
-            encoded = cv2.imencode(".ppm", frame)[1].tobytes()
-            self.video_image = tk.PhotoImage(data=encoded, format="PPM")
-            self.video.configure(image=self.video_image)
-
-        if self.paused:
-            state = "Paused"
-        elif hand is None:
-            state = "No hand in view"
-        elif self.controller.button_down:
-            state = "Pinching"
-        elif self.controller.gesture is not None:
-            state = f"Gesture {self.controller.gesture}"
-        else:
-            state = "Tracking"
-        self.status.configure(text=f"{state}   |   {self.fps:.0f} FPS",
-                              fg=MUTED if self.paused or hand is None else GREEN)
+        # Nothing to draw while the window is minimised.
+        if self.root.state() != "iconic":
+            if picture is not None:
+                # Tk can read the PPM image format directly, so no extra image library is needed.
+                encoded = cv2.imencode(".ppm", picture)[1].tobytes()
+                self.video_image = tk.PhotoImage(data=encoded, format="PPM")
+                self.video.configure(image=self.video_image)
+            active = state not in ("Paused", "No hand in view", "Starting")
+            self.status.configure(text=f"{state}   |   {fps:.0f} FPS",
+                                  fg=GREEN if active else MUTED)
+        self.root.after(REFRESH_MS, self._refresh)
 
     def stop(self):
         if not self.running:
             return
         self.running = False
-        try:
-            self.controller.hand_lost()  # never leave the mouse button held down
-        except pyautogui.FailSafeException:
-            pass
-        self.tracker.close()
-        self.camera.release()
+        self.stop_requested.set()
+        if self.worker.is_alive():
+            self.worker.join(timeout=3)  # the camera thread cleans up after itself
         self.root.destroy()
 
     def run(self):
-        self.root.after(0, self.step)
+        self.worker.start()
+        self.root.after(0, self._refresh)
         try:
             self.root.mainloop()
         finally:
